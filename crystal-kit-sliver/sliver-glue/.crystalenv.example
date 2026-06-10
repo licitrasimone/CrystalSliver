@@ -1,0 +1,5 @@
+# Copy to .crystalenv and fill in your path.
+# .crystalenv is git-ignored — safe for engagement-specific paths.
+# All sliver-glue scripts source this automatically if present.
+
+CRYSTAL_PALACE_HOME=/home/operator/external/crystalpalace/dist

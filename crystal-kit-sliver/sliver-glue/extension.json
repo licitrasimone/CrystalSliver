@@ -20,6 +20,12 @@
             "desc": "Path on operator host to a Crystal Palace PICO .bin produced by generate.sh — Sliver client reads it and forwards bytes to the implant",
             "type": "file",
             "optional": false
+        },
+        {
+            "name": "args",
+            "desc": "Optional command/args string passed to the post-ex DLL at runtime as lpReserved — overrides any args baked into the PICO at link time",
+            "type": "string",
+            "optional": true
         }
     ]
 }
