@@ -134,7 +134,8 @@ void go ( void * loader_arguments )
     DLLMAIN_FUNC entry_point = EntryPoint ( &dll_data, dll_dst );
 
     /* Pointer to DLL arguments */
-	char * dll_arguments = GETRESOURCE ( _DLLARGS_ );
+	char * baked_args    = GETRESOURCE ( _DLLARGS_ );
+    char * dll_arguments = loader_arguments ? (char *)loader_arguments : baked_args;
 
     /* free the unmasked copy */
     KERNEL32$VirtualFree ( dll_src, 0, MEM_RELEASE );

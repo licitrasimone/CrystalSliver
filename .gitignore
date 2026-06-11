@@ -25,9 +25,16 @@ build/
 *.jar
 libtcg.x64.zip
 
+# Per-operator config (engagement-specific paths, never commit)
+.crystalenv
+
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
 *.swp
 *~
+
+# Claude Code
+.claude/
+MEMORY/

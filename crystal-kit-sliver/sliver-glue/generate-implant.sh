@@ -24,7 +24,10 @@
 
 set -euo pipefail
 
-: "${CRYSTAL_PALACE_HOME:?Set CRYSTAL_PALACE_HOME to the Crystal Palace dist/ dir}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$SCRIPT_DIR/.crystalenv" ]] && source "$SCRIPT_DIR/.crystalenv"
+
+: "${CRYSTAL_PALACE_HOME:?Set CRYSTAL_PALACE_HOME or create sliver-glue/.crystalenv with CRYSTAL_PALACE_HOME=<path>}"
 
 usage() {
     cat <<EOF

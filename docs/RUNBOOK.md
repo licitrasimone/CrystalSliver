@@ -231,12 +231,15 @@ Execution order inside `run.x64.exe`:
 
 1. `run.x64.exe` reads `prod.crystal.bin` into RWX memory
 2. Jumps to offset 0 of the PICO (Crystal Palace `+gofirst` guarantees `go` is there)
-3. Crystal Palace loader resolves the Win32 APIs it needs via ror13 hashing
+3. Crystal Palace loader resolves Win32 APIs via ror13 hashing
 4. Installs IAT hooks on `VirtualAlloc` / `VirtualProtect` / `VirtualFree` / `LoadLibraryA`
-5. Installs Draugr call-stack spoof
-6. Unmasks (XOR) the embedded Sliver DLL
-7. Calls Sliver's `DllMain(DLL_PROCESS_ATTACH)`
-8. Sliver implant initializes and beacons home
+5. Installs Draugr call-stack spoofing
+6. Unmasks (XOR) the embedded Sliver DLL into a new allocation (`dll_dst`)
+7. Registers the beacon's `.pdata` exception table via `RtlAddFunctionTable` — required so Go's runtime can call `RtlLookupFunctionEntry` on beacon addresses (goroutine stack growth / async preemption)
+8. Runs TLS callbacks (`DLL_PROCESS_ATTACH`) — CRT static init needed by CGO code
+9. Calls `DllMain(DLL_PROCESS_ATTACH)` — Go runtime init
+10. Walks the beacon export table and calls `StartW()` — this is the explicit C2-loop entry point; `DllMain` alone does **not** start the beacon goroutine
+11. `Sleep(INFINITE)` keeps the loader thread alive so the Go scheduler can run beacon goroutines
 
 On the Sliver console:
 
@@ -246,7 +249,18 @@ sliver > use 2
 sliver (WIN10-LAB) > whoami
 ```
 
-### 2.6 Iteration: measure detection
+### 2.6 Common Phase 2 failures
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Process runs ~200 s then exits code 1, zero TCP connections | `.pdata` not registered → `RtlLookupFunctionEntry` returns NULL for all beacon addresses → goroutine stack can't grow → connection goroutine panics | `NTDLL$RtlAddFunctionTable` must be called in `loader.c` before `DllMain` |
+| Process exits immediately, no network activity | `StartW` not called — all three data-directory lookups returned zero because code was reading headers from `dll_dst` (which has no headers; Crystal Palace `LoadSections` only maps sections) | Use `GetDataDirectory(&dll_data, entry)` everywhere; save `export_rva` before `VirtualFree(dll_src)` |
+| CGO / CRT crashes before any network activity | TLS callback[0] (CRT `_initterm`) never called | Walk `IMAGE_DIRECTORY_ENTRY_TLS` before `DllMain`; get RVA from `GetDataDirectory`, not from `dll_dst` |
+| Crash in beacon goroutine shortly after start | `_ExitThread` hook frees `dll_dst` while beacon is running | Remove `cleanup_memory` from `_ExitThread` in `pico.c` |
+| Random crashes when beacon sleeps | `_Sleep` hook XOR-masks all DLL sections while Go goroutines on other threads keep executing | Remove `mask_memory` calls from `_Sleep` in `pico.c` |
+| `VirtualAlloc` / `VirtualFree` / `VirtualProtect` infinite loop | Fallback inside hook used `KERNEL32$Foo` which is rewritten to `_Foo` by `loader.spec` `attach` directive | Use `KERNELBASE$Foo` as fallback (KERNELBASE is not in any `attach` list) |
+
+### 2.8 Iteration: measure detection
 
 - Re-enable Defender / EDR before subsequent tests
 - Use `external/crystalpalace/dist/link ... -g out.yar` to generate YARA rules against your build, useful for guessing the EDR signature surface

@@ -17,11 +17,14 @@
 
 set -euo pipefail
 
-: "${CRYSTAL_PALACE_HOME:?Set CRYSTAL_PALACE_HOME to the Crystal Palace dist/ dir (contains crystalpalace.jar + link script)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$SCRIPT_DIR/.crystalenv" ]] && source "$SCRIPT_DIR/.crystalenv"
 
-INPUT_DLL="${1:?Usage: generate.sh <input.dll> [args-file] [output.bin]}"
-ARGS_FILE="${2:-}"
-OUTPUT="${3:-./build/crystal-postex.x64.bin}"
+: "${CRYSTAL_PALACE_HOME:?Set CRYSTAL_PALACE_HOME or create sliver-glue/.crystalenv with CRYSTAL_PALACE_HOME=<path>}"
+
+INPUT_DLL="${1:?Usage: generate.sh <input.dll> [args-string-or-file] [output.bin]}"
+ARGS_INPUT="${2:-}"
+OUTPUT="${3:-./build/$(basename "$INPUT_DLL" .dll).pico.bin}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POSTEX_DIR="$REPO_ROOT/postex-loader"
@@ -32,9 +35,14 @@ mkdir -p "$BUILD_DIR"
 # Resolve OUTPUT to absolute path BEFORE we cd into postex-loader
 OUTPUT="$(cd "$BUILD_DIR" && pwd)/$(basename "$OUTPUT")"
 
-if [[ -z "$ARGS_FILE" ]]; then
+if [[ -z "$ARGS_INPUT" ]]; then
     ARGS_FILE="$BUILD_DIR/empty.args"
     : > "$ARGS_FILE"
+elif [[ -f "$ARGS_INPUT" ]]; then
+    ARGS_FILE="$ARGS_INPUT"
+else
+    ARGS_FILE="$BUILD_DIR/args.tmp"
+    printf '%s' "$ARGS_INPUT" > "$ARGS_FILE"
 fi
 ARGS_FILE_ABS="$(cd "$(dirname "$ARGS_FILE")" && pwd)/$(basename "$ARGS_FILE")"
 

