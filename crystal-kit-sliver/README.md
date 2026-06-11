@@ -9,17 +9,21 @@ Source tree for the Crystal Palace ↔ Sliver port. See the [project root README
 | `loader/` | Reflective loader sources (Use case A, implant evasion). Verbatim copy of `loader/` from upstream Crystal-Kit. |
 | `postex-loader/` | Post-ex loader sources (Use case B). Crystal-Kit upstream + Xenon patch (DFR → `ror13`, removed `$GMH`/`$GPA` CS smart pointers, added `dll_args` section). |
 | `sliver-glue/` | Sliver-specific build glue and Extension wrapper. |
+| `sliver-glue/wrapper/` | `crystal-loader.c` — Sliver Extension DLL for Use case B (`crystal` command). |
+| `sliver-glue/crystal-exec/` | `crystalexec.c` + `crystal-exec.c` — built-in shell executor via Crystal Palace (`crystal-exec` command). 4-step build: DLL → PICO → embedded header → extension DLL. |
 | `libtcg.x64.zip` | Upstream binary dependency. Kept in-tree so `loader.spec`'s `mergelib "../libtcg.x64.zip"` resolves without extra setup. |
 
 ## Build entry points
 
 - `make -C loader all` — produce 8 `.o` files + 1 `.bin` under `loader/bin/`
 - `make -C postex-loader all` — same for postex
-- `make -C sliver-glue/wrapper all` — produce `sliver-glue/crystal-loader.x64.dll` (Sliver Extension)
-- `sliver-glue/generate.sh` — Use case B build wrapper
+- `make -C sliver-glue/wrapper all` — produce `sliver-glue/crystal-loader.x64.dll` (Sliver Extension, `crystal` command)
+- `make -C sliver-glue/crystal-exec all` — produce `sliver-glue/crystal-exec.x64.dll` (built-in shell executor, `crystal-exec` command)
+- `sliver-glue/postex.sh <dll> [args]` — Use case B convenience wrapper: DLL → PICO, prints ready-to-paste Sliver command
+- `sliver-glue/generate.sh` — lower-level Use case B build wrapper (called by `postex.sh`)
 - `sliver-glue/generate-implant.sh` — Use case A build wrapper
 - `sliver-glue/bundle-implant.sh` — Use case A drop packager
-- `sliver-glue/pack-extension.sh` — Use case B tarball packager
+- `sliver-glue/pack-extension.sh` — package both DLLs + `extension.json` into Sliver Extension tarball
 
 ## Required environment
 

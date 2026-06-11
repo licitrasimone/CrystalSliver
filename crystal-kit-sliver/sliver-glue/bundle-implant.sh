@@ -39,6 +39,7 @@ fi
 
 BUILD_DIR="$(dirname "$OUTPUT")"
 mkdir -p "$BUILD_DIR"
+OUTPUT_ABS="$(cd "$BUILD_DIR" && pwd)/$(basename "$OUTPUT")"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -57,8 +58,7 @@ Execute on target (Windows x64):
   run.x64.exe $(basename "$IMPLANT_BIN")
 EOF
 
-( cd "$STAGE" && zip -q -r "$OUTPUT" . )
-OUTPUT_ABS="$(cd "$BUILD_DIR" && pwd)/$(basename "$OUTPUT")"
+( cd "$STAGE" && zip -q -r "$OUTPUT_ABS" . )
 
 echo "[+] Operator drop bundle ready: $OUTPUT_ABS"
 echo "    Contents:"

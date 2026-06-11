@@ -12,6 +12,7 @@ Build prerequisites, verified versions, and the actual pipeline used to produce 
 | `nasm` | 3.01 | Assemble `draugr.asm` → `draugr.x64.bin` | `apt install nasm` | `brew install nasm` |
 | `java` (JRE) | OpenJDK 17 | Execute `crystalpalace.jar` linker | `apt install default-jdk` | `brew install openjdk@17` |
 | `make` | GNU Make ≥ 4 | Build orchestration | preinstalled | preinstalled |
+| `xxd` | any | Embed PICO as C byte array (crystal-exec step 3) | `apt install xxd` | preinstalled |
 | `zip` | any | Pack operator drop bundle | `apt install zip` | preinstalled |
 | `curl` | any | Download Crystal Palace dist | preinstalled | preinstalled |
 
@@ -79,7 +80,7 @@ Example invocation:
 - Use case A (`loader/loader.spec` over a Windows DLL) → **117561 bytes** PICO
 - Use case B (`postex-loader/loader.spec` over a Windows DLL) → **111741 bytes** PICO
 
-### 3c. Sliver Extension wrapper DLL
+### 3c. Sliver Extension wrapper DLL (`crystal` command)
 
 `crystal-kit-sliver/sliver-glue/wrapper/Makefile`:
 
@@ -101,6 +102,39 @@ nasm -f bin smoketest.asm -o ../build/smoketest.bin
 # → 3 bytes: 31 c0 c3  (xor eax,eax; ret)
 ```
 
+### 3d. crystal-exec — embedded PICO command executor (`crystal-exec` command)
+
+4-step pipeline under `crystal-kit-sliver/sliver-glue/crystal-exec/Makefile`:
+
+```
+Step 1: crystalexec.c → crystalexec.dll
+  x86_64-w64-mingw32-gcc -Wall -Os -DBUILD_DLL -shared -Wl,--subsystem,windows \
+      -o crystalexec.dll crystalexec.c
+  NOTE: must be CRT-free (kernel32-only imports). Crystal Palace's manual loader
+  resolves imports from the DLL's IAT; msvcrt.dll functions like strtoull/snprintf
+  may not resolve correctly in the PICO context and will crash silently.
+
+Step 2: crystalexec.dll → crystalexec.pico.bin  (Crystal Palace wrap)
+  ../generate.sh crystalexec.dll "" crystalexec.pico.bin
+
+Step 3: crystalexec.pico.bin → crystalexec_pico.h  (embed as C byte array)
+  xxd -i crystalexec.pico.bin | \
+    sed 's/unsigned char .../unsigned char crystalexec_pico/; \
+         s/unsigned int .../unsigned int crystalexec_pico_len/' > crystalexec_pico.h
+
+Step 4: crystal-exec.c + crystalexec_pico.h → ../crystal-exec.x64.dll
+  x86_64-w64-mingw32-gcc -Wall -Os -DBUILD_DLL -shared -Wl,--subsystem,windows \
+      -o ../crystal-exec.x64.dll crystal-exec.c
+```
+
+Key design constraints:
+- `crystalexec.c` must import **only from kernel32.dll** — no msvcrt.dll / CRT functions
+- Use custom string helpers (`hex_parse`, `str_append`) instead of `strtoull`, `strtol`, `snprintf`
+- `crystal-exec.c` (the Sliver extension itself) may use CRT normally — it runs in the normal process context, not inside the PICO loader
+- Single callback model: all output accumulates into a heap buffer; exactly ONE `callback(buf, len)` call at the very end. Sliver extension loaders only display the first callback invocation — any subsequent calls are silently dropped.
+
+**Verified output:** `crystal-exec.x64.dll` — PE32+ x86-64, exports symbol `go`.
+
 ## 4. End-to-end timing on macOS Apple Silicon (reference)
 
 | Step | Elapsed |
@@ -110,6 +144,7 @@ nasm -f bin smoketest.asm -o ../build/smoketest.bin
 | `make -C loader all` | ~2 s |
 | `make -C postex-loader all` | ~2 s |
 | `make -C sliver-glue/wrapper all` | ~3 s |
+| `make -C sliver-glue/crystal-exec all` (4-step, includes Crystal Palace wrap) | ~4 s |
 | `./link` Crystal Palace run | ~1 s |
 | `./bundle-implant.sh` (zip) | <1 s |
 

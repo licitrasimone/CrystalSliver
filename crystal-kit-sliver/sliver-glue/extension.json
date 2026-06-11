@@ -1,31 +1,57 @@
 {
     "name": "crystal-loader",
-    "command_name": "crystal",
     "version": "0.1.0",
     "extension_author": "Simone Licitra",
     "original_author": "rasta-mouse, nickswink, TrustedSec (BOF compat)",
     "repo_url": "https://github.com/licitrasimone/crystal-kit-sliver",
-    "help": "Run a Crystal Palace PICO-wrapped post-ex DLL inside a Sliver implant",
-    "entrypoint": "go",
-    "files": [
+    "commands": [
         {
-            "os": "windows",
-            "arch": "amd64",
-            "path": "crystal-loader.x64.dll"
-        }
-    ],
-    "arguments": [
-        {
-            "name": "payload",
-            "desc": "Path on operator host to a Crystal Palace PICO .bin produced by generate.sh — Sliver client reads it and forwards bytes to the implant",
-            "type": "file",
-            "optional": false
+            "command_name": "crystal",
+            "help": "Run a Crystal Palace PICO-wrapped post-ex DLL inside a Sliver implant",
+            "long_help": "",
+            "entrypoint": "go",
+            "files": [
+                {
+                    "os": "windows",
+                    "arch": "amd64",
+                    "path": "crystal-loader.x64.dll"
+                }
+            ],
+            "arguments": [
+                {
+                    "name": "payload",
+                    "desc": "path[|args]  e.g. C:/tmp/tool.pico.bin|sekurlsa::logonpasswords exit",
+                    "type": "string",
+                    "optional": false
+                },
+                {
+                    "name": "args",
+                    "desc": "Optional args string passed to the post-ex DLL at runtime",
+                    "type": "string",
+                    "optional": true
+                }
+            ]
         },
         {
-            "name": "args",
-            "desc": "Optional command/args string passed to the post-ex DLL at runtime as lpReserved — overrides any args baked into the PICO at link time",
-            "type": "string",
-            "optional": true
+            "command_name": "crystal-exec",
+            "help": "Run a shell command on the target through Crystal Palace evasion",
+            "long_help": "Executes a command via Crystal Palace PICO (Draugr, AMSI bypass, memory cleanup). Output is returned to the operator. No file staging required — the executor is embedded in the extension DLL.",
+            "entrypoint": "go",
+            "files": [
+                {
+                    "os": "windows",
+                    "arch": "amd64",
+                    "path": "crystal-exec.x64.dll"
+                }
+            ],
+            "arguments": [
+                {
+                    "name": "cmd",
+                    "desc": "Shell command to execute, e.g. whoami /all",
+                    "type": "string",
+                    "optional": false
+                }
+            ]
         }
     ]
 }
