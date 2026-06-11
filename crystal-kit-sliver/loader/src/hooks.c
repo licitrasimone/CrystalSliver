@@ -35,6 +35,21 @@ DECLSPEC_IMPORT BOOL      WINAPI KERNEL32$WriteProcessMemory ( HANDLE, LPVOID, L
 DECLSPEC_IMPORT HRESULT   WINAPI OLE32$CoCreateInstance      ( REFCLSID, LPUNKNOWN, DWORD, REFIID, LPVOID * );
 DECLSPEC_IMPORT ULONG     NTAPI  NTDLL$NtContinue            ( CONTEXT *, BOOLEAN );
 
+/* KERNELBASE$ exports mirror KERNEL32$ on Win8+ but are not in any attach list.
+ * Used as safe fallbacks for the four functions that ARE in loader.spec's
+ * attach directives — adding KERNEL32$Foo() inside _Foo() would be rewritten
+ * to _Foo() by the linker, causing infinite recursion. */
+DECLSPEC_IMPORT LPVOID  WINAPI KERNELBASE$VirtualAlloc   ( LPVOID, SIZE_T, DWORD, DWORD );
+DECLSPEC_IMPORT BOOL    WINAPI KERNELBASE$VirtualFree    ( LPVOID, SIZE_T, DWORD );
+DECLSPEC_IMPORT BOOL    WINAPI KERNELBASE$VirtualProtect ( LPVOID, SIZE_T, DWORD, PDWORD );
+DECLSPEC_IMPORT HMODULE WINAPI KERNELBASE$LoadLibraryA   ( LPCSTR );
+
+/* KERNEL32$ HeapAlloc/Free/ReAlloc declared here for fallback use.
+ * These are NOT in loader.spec's attach list so will not be rewritten. */
+DECLSPEC_IMPORT LPVOID WINAPI KERNEL32$HeapAlloc   ( HANDLE, DWORD, SIZE_T );
+DECLSPEC_IMPORT BOOL   WINAPI KERNEL32$HeapFree    ( HANDLE, DWORD, LPVOID );
+DECLSPEC_IMPORT LPVOID WINAPI KERNEL32$HeapReAlloc ( HANDLE, DWORD, LPVOID, SIZE_T );
+
 BOOL WINAPI _HttpSendRequestA ( HINTERNET hRequest, LPCSTR lpszHeaders, DWORD dwHeadersLength, LPVOID lpOptional, DWORD dwOptionalLength )
 {
     FUNCTION_CALL call = { 0 };
@@ -122,10 +137,14 @@ BOOL WINAPI _CloseHandle ( HANDLE hObject )
 
     call.ptr  = ( PVOID ) ( KERNEL32$CloseHandle );
     call.argc = 1;
-    
+
     call.args [ 0 ] = spoof_arg ( hObject );
 
-    return ( BOOL ) spoof_call ( &call );
+    BOOL result = ( BOOL ) spoof_call ( &call );
+    if ( !result ) {
+        result = KERNEL32$CloseHandle ( hObject );
+    }
+    return result;
 }
 
 HANDLE WINAPI _CreateFileMappingA ( HANDLE hFile, LPSECURITY_ATTRIBUTES lpFileMappingAttributes, DWORD flProtect, DWORD dwMaximumSizeHigh, DWORD dwMaximumSizeLow, LPCSTR lpName )
@@ -190,7 +209,7 @@ HANDLE WINAPI _CreateThread ( LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T d
 
     call.ptr  = ( PVOID ) ( KERNEL32$CreateThread );
     call.argc = 6;
-    
+
     call.args [ 0 ] = spoof_arg ( lpThreadAttributes );
     call.args [ 1 ] = spoof_arg ( dwStackSize );
     call.args [ 2 ] = spoof_arg ( lpStartAddress );
@@ -198,7 +217,11 @@ HANDLE WINAPI _CreateThread ( LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T d
     call.args [ 4 ] = spoof_arg ( dwCreationFlags );
     call.args [ 5 ] = spoof_arg ( lpThreadId );
 
-    return ( HANDLE ) spoof_call ( &call );
+    HANDLE result = ( HANDLE ) spoof_call ( &call );
+    if ( result == NULL ) {
+        result = KERNEL32$CreateThread ( lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId );
+    }
+    return result;
 }
 
 HRESULT WINAPI _CoCreateInstance ( REFCLSID rclsid, LPUNKNOWN pUnkOuter, DWORD dwClsContext, REFIID riid, LPVOID * ppv )
@@ -223,7 +246,7 @@ BOOL WINAPI _DuplicateHandle ( HANDLE hSourceProcessHandle, HANDLE hSourceHandle
 
     call.ptr  = ( PVOID ) ( KERNEL32$DuplicateHandle );
     call.argc = 7;
-    
+
     call.args [ 0 ] = spoof_arg ( hSourceProcessHandle );
     call.args [ 1 ] = spoof_arg ( hSourceHandle );
     call.args [ 2 ] = spoof_arg ( hTargetProcessHandle );
@@ -232,7 +255,9 @@ BOOL WINAPI _DuplicateHandle ( HANDLE hSourceProcessHandle, HANDLE hSourceHandle
     call.args [ 5 ] = spoof_arg ( bInheritHandle );
     call.args [ 6 ] = spoof_arg ( dwOptions );
 
-    return ( BOOL ) spoof_call ( &call );
+    BOOL result = ( BOOL ) spoof_call ( &call );
+    if ( !result ) { result = KERNEL32$DuplicateHandle ( hSourceProcessHandle, hSourceHandle, hTargetProcessHandle, lpTargetHandle, dwDesiredAccess, bInheritHandle, dwOptions ); }
+    return result;
 }
 
 HMODULE WINAPI _LoadLibraryA ( LPCSTR lpLibFileName )
@@ -241,10 +266,12 @@ HMODULE WINAPI _LoadLibraryA ( LPCSTR lpLibFileName )
 
     call.ptr  = ( PVOID ) ( KERNEL32$LoadLibraryA );
     call.argc = 1;
-    
+
     call.args [ 0 ] = spoof_arg ( lpLibFileName );
 
-    return ( HMODULE ) spoof_call ( &call );
+    HMODULE result = ( HMODULE ) spoof_call ( &call );
+    if ( !result ) { result = KERNELBASE$LoadLibraryA ( lpLibFileName ); }
+    return result;
 }
 
 BOOL WINAPI _GetThreadContext ( HANDLE hThread, LPCONTEXT lpContext )
@@ -253,11 +280,13 @@ BOOL WINAPI _GetThreadContext ( HANDLE hThread, LPCONTEXT lpContext )
 
     call.ptr  = ( PVOID ) ( KERNEL32$GetThreadContext );
     call.argc = 2;
-    
+
     call.args [ 0 ] = spoof_arg ( hThread );
     call.args [ 1 ] = spoof_arg ( lpContext );
 
-    return ( BOOL ) spoof_call ( &call );
+    BOOL result = ( BOOL ) spoof_call ( &call );
+    if ( !result ) { result = KERNEL32$GetThreadContext ( hThread, lpContext ); }
+    return result;
 }
 
 LPVOID WINAPI _MapViewOfFile ( HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap )
@@ -326,10 +355,12 @@ DWORD WINAPI _ResumeThread ( HANDLE hThread )
 
     call.ptr  = ( PVOID ) ( KERNEL32$ResumeThread );
     call.argc = 1;
-    
+
     call.args [ 0 ] = spoof_arg ( hThread );
 
-    return ( DWORD ) spoof_call ( &call );
+    DWORD result = ( DWORD ) spoof_call ( &call );
+    if ( !result ) { result = KERNEL32$ResumeThread ( hThread ); }
+    return result;
 }
 
 BOOL WINAPI _SetThreadContext ( HANDLE hThread, const CONTEXT * lpContext )
@@ -338,11 +369,13 @@ BOOL WINAPI _SetThreadContext ( HANDLE hThread, const CONTEXT * lpContext )
 
     call.ptr  = ( PVOID ) ( KERNEL32$SetThreadContext );
     call.argc = 2;
-    
+
     call.args [ 0 ] = spoof_arg ( hThread );
     call.args [ 1 ] = spoof_arg ( lpContext );
 
-    return ( BOOL ) spoof_call ( &call );
+    BOOL result = ( BOOL ) spoof_call ( &call );
+    if ( !result ) { result = KERNEL32$SetThreadContext ( hThread, lpContext ); }
+    return result;
 }
 
 BOOL WINAPI _UnmapViewOfFile ( LPCVOID lpBaseAddress )
@@ -363,13 +396,15 @@ LPVOID WINAPI _VirtualAlloc ( LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocatio
 
     call.ptr  = ( PVOID ) ( KERNEL32$VirtualAlloc );
     call.argc = 4;
-    
+
     call.args [ 0 ] = spoof_arg ( lpAddress );
     call.args [ 1 ] = spoof_arg ( dwSize );
     call.args [ 2 ] = spoof_arg ( flAllocationType );
     call.args [ 3 ] = spoof_arg ( flProtect );
 
-    return ( LPVOID ) spoof_call ( &call );
+    LPVOID result = ( LPVOID ) spoof_call ( &call );
+    if ( !result ) { result = KERNELBASE$VirtualAlloc ( lpAddress, dwSize, flAllocationType, flProtect ); }
+    return result;
 }
 
 LPVOID WINAPI _VirtualAllocEx ( HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect )
@@ -394,12 +429,14 @@ BOOL WINAPI _VirtualFree ( LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType )
 
     call.ptr  = ( PVOID ) ( KERNEL32$VirtualFree );
     call.argc = 3;
-    
+
     call.args [ 0 ] = spoof_arg ( lpAddress );
     call.args [ 1 ] = spoof_arg ( dwSize );
     call.args [ 2 ] = spoof_arg ( dwFreeType );
 
-    return ( BOOL ) spoof_call ( &call );
+    BOOL result = ( BOOL ) spoof_call ( &call );
+    if ( !result ) { result = KERNELBASE$VirtualFree ( lpAddress, dwSize, dwFreeType ); }
+    return result;
 }
 
 BOOL WINAPI _VirtualProtect ( LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect )
@@ -408,13 +445,15 @@ BOOL WINAPI _VirtualProtect ( LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtec
 
     call.ptr  = ( PVOID ) ( KERNEL32$VirtualProtect );
     call.argc = 4;
-    
+
     call.args [ 0 ] = spoof_arg ( lpAddress );
     call.args [ 1 ] = spoof_arg ( dwSize );
     call.args [ 2 ] = spoof_arg ( flNewProtect );
     call.args [ 3 ] = spoof_arg ( lpflOldProtect );
 
-    return ( BOOL ) spoof_call ( &call );
+    BOOL result = ( BOOL ) spoof_call ( &call );
+    if ( !result ) { result = KERNELBASE$VirtualProtect ( lpAddress, dwSize, flNewProtect, lpflOldProtect ); }
+    return result;
 }
 
 BOOL WINAPI _VirtualProtectEx ( HANDLE hProcess, LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect )
@@ -439,12 +478,14 @@ SIZE_T WINAPI _VirtualQuery ( LPCVOID lpAddress, PMEMORY_BASIC_INFORMATION lpBuf
 
     call.ptr  = ( PVOID ) ( KERNEL32$VirtualQuery );
     call.argc = 3;
-    
+
     call.args [ 0 ] = spoof_arg ( lpAddress );
     call.args [ 1 ] = spoof_arg ( lpBuffer );
     call.args [ 2 ] = spoof_arg ( dwLength );
 
-    return ( SIZE_T ) spoof_call ( &call );
+    SIZE_T result = ( SIZE_T ) spoof_call ( &call );
+    if ( !result ) { result = KERNEL32$VirtualQuery ( lpAddress, lpBuffer, dwLength ); }
+    return result;
 }
 
 BOOL WINAPI _WriteProcessMemory ( HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T * lpNumberOfBytesWritten )

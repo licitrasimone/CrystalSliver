@@ -34,3 +34,7 @@ libtcg.x64.zip
 .idea/
 *.swp
 *~
+
+# Claude Code
+.claude/
+MEMORY/
