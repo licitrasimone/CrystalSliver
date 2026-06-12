@@ -15,7 +15,7 @@ The two flows share the same build pipeline and Crystal Palace distribution but 
 
 ```bash
 sudo apt update
-sudo apt install -y mingw-w64 nasm default-jdk make zip git curl
+sudo apt install -y mingw-w64 nasm openjdk-17-jdk make zip git curl
 ```
 
 Verify:
@@ -23,7 +23,7 @@ Verify:
 ```bash
 x86_64-w64-mingw32-gcc --version | head -1   # MinGW-w64 GCC
 nasm --version                                 # >= 2.15
-java -version                                  # >= 11
+java -version                                  # must be 17 — Java 21+ breaks crystalpalace.jar with NoSuchMethodError
 ```
 
 ### 0.2 Get the repo on Kali

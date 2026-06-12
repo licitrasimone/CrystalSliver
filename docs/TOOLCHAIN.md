@@ -10,7 +10,7 @@ Build prerequisites, verified versions, and the actual pipeline used to produce 
 |---|---|---|---|---|
 | `x86_64-w64-mingw32-gcc` | MinGW-w64 GCC 15.2.0 | Cross-compile C sources to Windows x64 objects | `apt install mingw-w64` | `brew install mingw-w64` |
 | `nasm` | 3.01 | Assemble `draugr.asm` → `draugr.x64.bin` | `apt install nasm` | `brew install nasm` |
-| `java` (JRE) | OpenJDK 17 | Execute `crystalpalace.jar` linker | `apt install default-jdk` | `brew install openjdk@17` |
+| `java` (JRE) | OpenJDK 17 (**exactly**) | Execute `crystalpalace.jar` linker | `apt install openjdk-17-jdk` | `brew install openjdk@17` |
 | `make` | GNU Make ≥ 4 | Build orchestration | preinstalled | preinstalled |
 | `xxd` | any | Embed PICO as C byte array (crystal-exec step 3) | `apt install xxd` | preinstalled |
 | `openssl` | any | AES-256-CBC encrypt PICO for stager delivery (`gen_payload.py`) | `apt install openssl` | preinstalled |
@@ -201,7 +201,7 @@ set -e
 
 # 1. Toolchain
 sudo apt update
-sudo apt install -y mingw-w64 nasm default-jdk make zip git curl
+sudo apt install -y mingw-w64 nasm openjdk-17-jdk make zip git curl
 
 # 2. Crystal Palace
 mkdir -p external/crystalpalace
@@ -233,6 +233,7 @@ echo "Setup OK. Now: cd crystal-kit-sliver && make -C loader all && make -C post
 
 ## 7. Known toolchain gotchas
 
+- **Java version**: `crystalpalace.jar` requires Java 17. Java 21+ removes methods it depends on and throws `Exception in thread "main" java.lang.NoSuchMethodError` at any `./link` or `generate-implant.sh` / `crystal-exec make` invocation. `apt install default-jdk` on current Kali/Debian/Ubuntu pulls Java 21 — always use `apt install openjdk-17-jdk` and verify with `java -version`. If you have multiple JDKs: `sudo update-alternatives --set java /usr/lib/jvm/java-17-openjdk-amd64/bin/java`.
 - macOS rosetta vs ARM64: brew installs native ARM binaries; the cross-compiled output is `x86-64` Windows PE so this works regardless.
 - MinGW-w64 ≥ 13 introduces `-fcf-protection` defaults that can break PIC. The Makefiles pass `-shared -Wno-pointer-arith`, no extra hardening flags. If your distro pins a different MinGW build, verify with `make` first.
 - `./link` and friends inside the Crystal Palace dist must be executable. The tarball usually preserves the bit, but after `tar -xz` some filesystems strip exec; fix with `chmod +x external/crystalpalace/dist/{link,piclink,coffparse,linkserve}`.
