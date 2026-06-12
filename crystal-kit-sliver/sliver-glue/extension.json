@@ -9,7 +9,7 @@
             "command_name": "crystal",
             "help": "Run a Crystal Palace PICO-wrapped post-ex DLL inside a Sliver implant",
             "long_help": "",
-            "entrypoint": "go",
+            "entrypoint": "Initialize",
             "files": [
                 {
                     "os": "windows",
@@ -36,7 +36,7 @@
             "command_name": "crystal-exec",
             "help": "Run a shell command on the target through Crystal Palace evasion",
             "long_help": "Executes a command via Crystal Palace PICO (Draugr, AMSI bypass, memory cleanup). Output is returned to the operator. No file staging required — the executor is embedded in the extension DLL.",
-            "entrypoint": "go",
+            "entrypoint": "Initialize",
             "files": [
                 {
                     "os": "windows",
